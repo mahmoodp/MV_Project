@@ -10,7 +10,10 @@ import numpy as np
 import argparse
 import cv2
 import imutils
+import pickle
+
 from barcode_scanner import scan_barcode
+from simplelbp import local_binary_pattern
 
 '''
 # construct the argument parser and parse the arguments
@@ -117,6 +120,10 @@ def order_points_old(pts):
     # return the ordered coordinates
     return rect
 
+
+
+    
+
 def find_parts(image_input):
 	
 	#TARGET_PIXEL_AREA = 500000.0
@@ -202,9 +209,9 @@ def find_parts(image_input):
 #image = cv2.imread(args["image"])
 
 
-image = cv2.imread("images/test.jpg")
+image = cv2.imread("images/in2.jpg")
 
-
+'''
 # read the barcode
 barcode_data = scan_barcode(image)
 
@@ -219,19 +226,19 @@ y_start = int(barcode_data[4])
 x_step = int(barcode_data[5])
 y_step = int(barcode_data[6])
 cell_gap = int(barcode_data[7])
+'''
 
 
 
-
-cv2.imshow("InputImage", imutils.resize(image, height = 650))
-cv2.waitKey(0)
+#cv2.imshow("InputImage", imutils.resize(image, height = 650))
+#cv2.waitKey(0)
 
 warped = extract_index_table(image)
 
 cv2.imshow("Scanned", warped)
 cv2.waitKey(0)
 
-'''
+
 #Define the dimensions of index table
 row_number = 4
 column_number = 8
@@ -240,7 +247,7 @@ y_start = 130
 x_step = 130
 y_step = 130
 cell_gap = 10
-'''
+
 
 '''
 cropped = resized_warped[130:255, 130:260]
@@ -258,30 +265,130 @@ index_table_matrix = np.zeros((row_number,column_number))
 # check if it is emmpty or occupied
 
 
+
+
+import socket
+import time
+
+
+
+
+# the list of all cell positions coordinates on pallet
+Pattern_Pose = []
+
+# the list of all approah and retreat offset for each cell on pallet
+app_ret_offset = []
+
+
+# read the coordinates and offset data from file
+def Read_Data_From_file(file_name):
+    with open(file_name, 'r') as data:
+        x = []
+        y = []
+        for line in data:
+            p = line.split()
+            x.append(p[0])
+            y.append(p[1])
+    return x, y
+
+
+# the list of all cell positions coordinates on pallet
+# the list of all approah and retreat offset for each cell on pallet
+Pattern_Pose, app_ret_offset = Read_Data_From_file('390329.csv')
+
+Pattern_Pose = np.array(Pattern_Pose).reshape(8, 4)
+
+print(Pattern_Pose)
+
+Pattern_Pose_To_Go = []
+
+
+
+# dunction to extract the features of input image
+
+def extract_features(img):
+    lbp1 = local_binary_pattern(img, 8, 5)
+    feature = np.histogram(lbp1, bins=range(257))[0]
+    feature = np.reshape(feature,[1,256])
+    return feature
+
+#load the machine learning model from disk
+filename = 'SVC.sav'
+trained_model = pickle.load(open(filename, 'rb'))
+print('--------------------')
+'''
+img = cv2.imread('occ3.jpg')
+cv2.imshow('aaa', img)
+cv2.waitKey(0)
+img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+print(trained_model.predict(extract_features(img)))
+'''
+
 for i in range(1, row_number+1):
 	y_start = i * (y_step + cell_gap) - cell_gap
 	for j in range (1, column_number+1):
 		x_start = j* (x_step+ cell_gap) - cell_gap
 		#print(y_start,y_step,x_start,x_step)
 		cropped = warped[y_start:y_start+y_step, x_start:x_start+x_step]
+		resized_cropped = imutils.resize(cropped, width = 64)
+		gray_resized_cropped = cv2.cvtColor(resized_cropped, cv2.COLOR_BGR2GRAY)
 		edged = cv2.Canny(cropped, 120, 200)
 		edged = cv2.dilate(edged, None, iterations=1)
 		edged = cv2.erode(edged, None, iterations=1)
-		#get_dominant_color(cropped)
-		cv2.imshow("cropped:{},{}".format(i,j), cropped)
-		cv2.waitKey(0)
-		cv2.imshow("edge_cropped:{},{}".format(i,j), edged)
+		#cv2.imshow("cropped:{},{}".format(i,j), cropped)
+		#cv2.waitKey(0)
+		#cv2.imshow("edge_cropped:{},{}".format(i,j), edged)
 		#
-		cell_check = find_parts(cropped)
-		if cell_check:
+		#cell_check = find_parts(cropped)
+		#if cell_check:
+		#	index_table_matrix[i-1,j-1]=1
+		#	Pattern_Pose_To_Go.append(Pattern_Pose[j-1][i-1])
+		result = trained_model.predict(extract_features(gray_resized_cropped))
+		if result == 1:
 			index_table_matrix[i-1,j-1]=1
-		cv2.waitKey(0)
-	cv2.waitKey(0)	
+			Pattern_Pose_To_Go.append(Pattern_Pose[j-1][i-1])
+
+		
+		#cv2.waitKey(0)
+	#cv2.waitKey(0)	
 
 
 print(index_table_matrix)
+print(Pattern_Pose_To_Go)
+print(len(Pattern_Pose_To_Go))
 
-#find_parts(warped)
+'''
+
+HOST = "192.168.0.9"   # The remote host
+PORT = 30002           # The same port as used by the server
+
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.connect((HOST, PORT))
+
+
+count = 0
+
+while count < len(Pattern_Pose_To_Go) :
+    # move to pattern position  
+    command = bytes(" movel(" + Pattern_Pose_To_Go[count] + ", a=1.2, v=0.25)"  + "\n", 'utf8')
+    print(command)
+    s.send (command)
+	
+    #if count + 1 % 4 == 0:
+    #    time.sleep(3)
+    #else:
+    #    time.sleep(2)
+    count += 1
+    time.sleep(5)
+	
+	
+
+
+print('finished')
 
 
 
+
+
+s.close()
+'''
